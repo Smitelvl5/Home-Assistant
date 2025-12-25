@@ -1,0 +1,422 @@
+# Loads default set of integrations. Do not remove.
+
+default_config:
+
+automation:
+  - !include Tort-Control/main_control.yaml
+  - !include Tort-Control/lights_schedule.yaml
+  - !include Tort-Control/fan_temperature_control.yaml
+  - !include Tort-Control/safety_sensor_disagreement.yaml
+  - !include Tort-Control/humidifier_timer.yaml
+
+script: !include scripts.yaml
+
+# scene: !include scenes.yaml  # Commented out - scenes.yaml doesn't exist
+
+# ============================================
+# RECORDER CONFIGURATION (Data Retention)
+# ============================================
+# Limits how long Home Assistant keeps historical data
+# This helps reduce database size and storage usage
+
+recorder:
+  # Purge data older than 7 days (matches dashboard 7-day view)
+  purge_keep_days: 7
+  # Automatically purge old data daily at 3:00 AM
+  auto_purge: true
+  # Commit to database every 5 seconds instead of every state change
+  commit_interval: 5
+  # Exclude certain entities from being recorded to save space
+  exclude:
+    # Exclude domains that change frequently and aren't critical
+    domains:
+      - automation
+      - script
+    # Exclude entities that update too frequently
+    entities:
+      - sensor.tortoise_temperature_status
+      - sensor.tortoise_humidity_status
+      - sensor.tortoise_system_health
+
+# ============================================
+# INPUT HELPERS
+# ======================
+
+input_boolean:
+  tortoise_automation_enabled:
+    name: Tortoise Automation Enabled
+    icon: mdi:robot
+  lights_schedule_enabled:
+    name: Lights Schedule Enabled
+    icon: mdi:lightbulb-clock
+  fan_temperature_control_enabled:
+    name: Fan Temperature Control Enabled
+    icon: mdi:fan
+
+input_datetime:
+  lights_on_time:
+    name: Lights On Time
+    has_date: false
+    has_time: true
+    icon: mdi:lightbulb-on
+  lights_off_time:
+    name: Lights Off Time
+    has_date: false
+    has_time: true
+    icon: mdi:lightbulb-off
+
+input_number:
+  tortoise_temperature_target:
+    name: Target Temperature
+    min: 70
+    max: 90
+    step: 1
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer
+    mode: slider
+    initial: 80
+    
+  temperature_hysteresis_range:
+    name: Temperature Hysteresis Range
+    min: 0.5
+    max: 5
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer-lines
+    mode: slider
+    
+  tortoise_humidity_target:
+    name: Target Humidity
+    min: 35
+    max: 65
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+    mode: slider
+    initial: 50
+    
+  humidity_hysteresis_range:
+    name: Humidity Hysteresis Range
+    min: 2
+    max: 10
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:water-opacity
+    mode: slider
+    
+  outdoor_minimum_temperature:
+    name: Outdoor Minimum Temperature
+    min: 50
+    max: 75
+    step: 1
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer-minus
+    mode: slider
+    
+  device_min_cycle_time:
+    name: Device Minimum Cycle Time (minutes)
+    min: 1
+    max: 30
+    step: 1
+    unit_of_measurement: "min"
+    icon: mdi:timer
+    mode: slider
+    initial: 5
+    
+  sensor_disagreement_threshold:
+    name: Sensor Disagreement Threshold
+    min: 2
+    max: 15
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer-alert
+    mode: slider
+    initial: 5
+    
+  temperature_change_rate_threshold:
+    name: Temperature Change Rate Threshold
+    min: 0.5
+    max: 5
+    step: 0.1
+    unit_of_measurement: "°F/min"
+    icon: mdi:thermometer-chevron-up
+    mode: slider
+    initial: 1.0
+    
+  fan_temperature_min:
+    name: Fan Temperature Range Min
+    min: 50
+    max: 70
+    step: 1
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer-low
+    mode: slider
+    initial: 60
+    
+  fan_temperature_max:
+    name: Fan Temperature Range Max
+    min: 70
+    max: 90
+    step: 1
+    unit_of_measurement: "°F"
+    icon: mdi:thermometer-high
+    mode: slider
+    initial: 80
+    
+  humidifier_timer_hours_remaining:
+    name: Humidifier Timer Hours Remaining
+    min: 0
+    max: 12
+    step: 0.01
+    unit_of_measurement: "hours"
+    icon: mdi:timer
+    mode: box
+    initial: 12.0
+
+# ============================================
+# TEMPLATE SENSORS
+# ============================================
+
+template:
+  - sensor:
+      # Average Temperature
+      - name: "Tortoise Average Temperature"
+        unique_id: tortoise_avg_temp
+        unit_of_measurement: "°F"
+        device_class: temperature
+        state_class: measurement
+        state: >
+          {% set matcha = states('sensor.tortoise_ht_sensor_temperature') | float %}
+          {% set tiptoe = states('sensor.tiptoe_s_ht_sensor_temperature') | float %}
+          {{ ((matcha + tiptoe) / 2) | round(1) }}
+        availability: >
+          {{ states('sensor.tortoise_ht_sensor_temperature') not in ['unavailable', 'unknown', 'none'] and
+             states('sensor.tiptoe_s_ht_sensor_temperature') not in ['unavailable', 'unknown', 'none'] }}
+        icon: mdi:thermometer
+
+      # Average Humidity
+      - name: "Tortoise Average Humidity"
+        unique_id: tortoise_avg_humidity
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+        state: >
+          {% set matcha = states('sensor.tortoise_ht_sensor_humidity') | float %}
+          {% set tiptoe = states('sensor.tiptoe_s_ht_sensor_humidity') | float %}
+          {{ ((matcha + tiptoe) / 2) | round(1) }}
+        availability: >
+          {{ states('sensor.tortoise_ht_sensor_humidity') not in ['unavailable', 'unknown', 'none'] and
+             states('sensor.tiptoe_s_ht_sensor_humidity') not in ['unavailable', 'unknown', 'none'] }}
+        icon: mdi:water-percent
+
+      # Temperature Status
+      - name: "Tortoise Temperature Status"
+        unique_id: tortoise_temp_status
+        state: >
+          {% set avg_temp = states('sensor.tortoise_average_temperature') | float(0) %}
+          {% set target = states('input_number.tortoise_temperature_target') | float(72) %}
+          {% set range = states('input_number.temperature_hysteresis_range') | float(2) %}
+          {% if avg_temp == 0 or avg_temp is none %}
+            Unknown
+          {% elif avg_temp < (target - range) %}
+            Too Cold
+          {% elif avg_temp > (target + range) %}
+            Too Hot
+          {% elif avg_temp > target %}
+            Warm
+          {% elif avg_temp < target %}
+            Cool
+          {% else %}
+            Optimal
+          {% endif %}
+        icon: >
+          {% set status = states('sensor.tortoise_temperature_status') %}
+          {% if status == 'Too Cold' %}
+            mdi:thermometer-low
+          {% elif status == 'Too Hot' %}
+            mdi:thermometer-high
+          {% elif status == 'Optimal' %}
+            mdi:thermometer-check
+          {% else %}
+            mdi:thermometer
+          {% endif %}
+
+      # Humidity Status
+      - name: "Tortoise Humidity Status"
+        unique_id: tortoise_humidity_status
+        state: >
+          {% set avg_humidity = states('sensor.tortoise_average_humidity') | float(0) %}
+          {% set target = states('input_number.tortoise_humidity_target') | float(60) %}
+          {% set range = states('input_number.humidity_hysteresis_range') | float(10) %}
+          {% if avg_humidity == 0 or avg_humidity is none %}
+            Unknown
+          {% elif avg_humidity < (target - range) %}
+            Too Dry
+          {% elif avg_humidity > (target + range) %}
+            Too Humid
+          {% elif avg_humidity < target %}
+            Slightly Dry
+          {% else %}
+            Optimal
+          {% endif %}
+        icon: >
+          {% set status = states('sensor.tortoise_humidity_status') %}
+          {% if status == 'Too Dry' %}
+            mdi:water-alert
+          {% elif status == 'Too Humid' %}
+            mdi:water-plus
+          {% elif status == 'Optimal' %}
+            mdi:water-check
+          {% else %}
+            mdi:water-percent
+          {% endif %}
+
+      # System Health Status
+      - name: "Tortoise System Health"
+        unique_id: tortoise_system_health
+        state: >
+          {% set issues = [] %}
+          {% if states('sensor.tortoise_ht_sensor_battery') | int(100) < 20 %}
+            {% set issues = issues + ['Matcha battery low'] %}
+          {% endif %}
+          {% if states('sensor.tiptoe_s_ht_sensor_battery') | int(100) < 20 %}
+            {% set issues = issues + ['Tiptoe battery low'] %}
+          {% endif %}
+          {% if states('sensor.tortoise_ht_sensor_temperature') in ['unavailable', 'unknown', 'none'] %}
+            {% set issues = issues + ['Matcha sensor offline'] %}
+          {% endif %}
+          {% if states('sensor.tiptoe_s_ht_sensor_temperature') in ['unavailable', 'unknown', 'none'] %}
+            {% set issues = issues + ['Tiptoe sensor offline'] %}
+          {% endif %}
+          {% if is_state('input_boolean.tortoise_automation_enabled', 'off') %}
+            {% set issues = issues + ['Automation disabled'] %}
+          {% endif %}
+          {% if issues | count > 0 %}
+            {{ issues | join(', ') }}
+          {% else %}
+            All Systems Healthy
+          {% endif %}
+        availability: >
+          {{ states('sensor.tortoise_ht_sensor_temperature') not in ['unavailable', 'unknown', 'none'] or
+             states('sensor.tiptoe_s_ht_sensor_temperature') not in ['unavailable', 'unknown', 'none'] }}
+        icon: >
+          {% if 'All Systems Healthy' in states('sensor.tortoise_system_health') %}
+            mdi:check-circle
+          {% elif states('sensor.tortoise_system_health') == 'unavailable' %}
+            mdi:help-circle
+          {% else %}
+            mdi:alert-circle
+          {% endif %}
+
+      # Device Runtime Today
+      - name: "Heater Runtime Today"
+        unique_id: heater_runtime_today
+        unit_of_measurement: "min"
+        state: >
+          {{ (states('sensor.heater_on_time_today') | float * 60) | round(0) }}
+        icon: mdi:radiator
+
+      - name: "Humidifier Runtime Today"
+        unique_id: humidifier_runtime_today
+        unit_of_measurement: "min"
+        state: >
+          {{ (states('sensor.humidifier_on_time_today') | float * 60) | round(0) }}
+        icon: mdi:air-humidifier
+
+      - name: "Fans Runtime Today"
+        unique_id: fans_runtime_today
+        unit_of_measurement: "min"
+        state: >
+          {{ (states('sensor.fans_on_time_today') | float * 60) | round(0) }}
+        icon: mdi:fan
+
+      # Humidifier Hours Remaining (simple countdown timer)
+      - name: "Humidifier Hours Remaining"
+        unique_id: humidifier_hours_remaining
+        unit_of_measurement: "hours"
+        state: >
+          {{ states('input_number.humidifier_timer_hours_remaining') | float(12.0) }}
+        icon: >
+          {% set remaining = states('input_number.humidifier_timer_hours_remaining') | float(12.0) %}
+          {% if remaining <= 0 %}
+            mdi:water-alert
+          {% elif remaining <= 2 %}
+            mdi:water-remove
+          {% else %}
+            mdi:water-check
+          {% endif %}
+
+  - binary_sensor:
+      # Outdoor Safe for Tortoises
+      - name: "Outdoor Safe for Tortoises"
+        unique_id: outdoor_safe_tortoises
+        device_class: safety
+        state: >
+          {% set outdoor_temp = state_attr('weather.forecast_home', 'temperature') | float(0) %}
+          {% if outdoor_temp == 0 %}
+            {% set outdoor_temp = state_attr('weather.forecast_home', 'current_temperature') | float(0) %}
+          {% endif %}
+          {% if outdoor_temp == 0 %}
+            {% set outdoor_temp = states('weather.forecast_home') | float(0) %}
+          {% endif %}
+          {% set min_temp = states('input_number.outdoor_minimum_temperature') | float(50) %}
+          {% if outdoor_temp == 0 or outdoor_temp is none %}
+            false
+          {% else %}
+            {{ outdoor_temp >= min_temp }}
+          {% endif %}
+        icon: >
+          {% if is_state('binary_sensor.outdoor_safe_for_tortoises', 'on') %}
+            mdi:sun-thermometer
+          {% else %}
+            mdi:sun-thermometer-outline
+          {% endif %}
+
+# ============================================
+# HISTORY STATS (for runtime tracking)
+# ============================================
+
+sensor:
+  - platform: history_stats
+    name: Heater On Time Today
+    entity_id: switch.heater
+    state: "on"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0) }}"
+    end: "{{ now() }}"
+
+  - platform: history_stats
+    name: Humidifier On Time Today
+    entity_id: switch.humidifier
+    state: "on"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0) }}"
+    end: "{{ now() }}"
+
+  - platform: history_stats
+    name: Fans On Time Today
+    entity_id: switch.fans
+    state: "on"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0) }}"
+    end: "{{ now() }}"
+
+
+  # Temperature Change Rate (raw derivative)
+  - platform: derivative
+    source: sensor.tortoise_average_temperature
+    name: Tortoise Temperature Change Rate Raw
+    unit_time: min
+    unit: "°F/min"
+    round: 2
+
+  # Temperature Change Rate (averaged over last 5 minutes to smooth fluctuations)
+  - platform: statistics
+    name: Tortoise Temperature Change Rate
+    entity_id: sensor.tortoise_temperature_change_rate_raw
+    state_characteristic: mean
+    max_age:
+      minutes: 5
+    sampling_size: 10
+    precision: 2
+

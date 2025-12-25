@@ -1,0 +1,240 @@
+# ============================================
+# TORTOISE CARE DASHBOARD
+# ============================================
+# Dashboard for monitoring and controlling tortoise habitat environment
+# Includes plugs, sensors, and all tortoise care entities
+
+views:
+  - title: Tortoise Care Dashboard
+    path: tortoise-care
+    icon: mdi:turtle
+    cards:
+      # ============================================
+      # 1. CURRENT ENVIRONMENT (MOST IMPORTANT)
+      # ============================================
+      - type: vertical-stack
+        cards:
+          - type: gauge
+            title: 🌡️ Temperature
+            entity: sensor.tortoise_average_temperature
+            min: 60
+            max: 95
+            severity:
+              green: 70
+              yellow: 65
+              red: 60
+            name: Average Temperature
+
+          - type: gauge
+            title: 💧 Humidity
+            entity: sensor.tortoise_average_humidity
+            min: 30
+            max: 80
+            severity:
+              green: 50
+              yellow: 40
+              red: 30
+            name: Average Humidity
+
+      # ============================================
+      # 2. QUICK CONTROLS (DEVICE SWITCHES)
+      # ============================================
+      - type: grid
+        square: false
+        columns: 2
+        cards:
+          - type: entity
+            entity: switch.heater
+            name: 🔥 Heater
+            icon: mdi:radiator
+            tap_action:
+              action: toggle
+
+          - type: entity
+            entity: switch.humidifier
+            name: 💨 Humidifier
+            icon: mdi:air-humidifier
+            tap_action:
+              action: toggle
+
+          - type: entity
+            entity: switch.fans
+            name: 🌪️ Fans
+            icon: mdi:fan
+            tap_action:
+              action: toggle
+
+          - type: entity
+            entity: switch.lights
+            name: 💡 Lights
+            icon: mdi:lightbulb
+            tap_action:
+              action: toggle
+
+      # ============================================
+      # 3. SENSOR READINGS
+      # ============================================
+      - type: grid
+        square: false
+        columns: 2
+        cards:
+          - type: entities
+            title: 📊 Matcha Sensor
+            icon: mdi:thermometer
+            show_header_toggle: false
+            entities:
+              - entity: sensor.tortoise_ht_sensor_temperature
+                name: Temperature
+              - entity: sensor.tortoise_ht_sensor_humidity
+                name: Humidity
+              - entity: sensor.tortoise_ht_sensor_battery
+                name: Battery
+
+          - type: entities
+            title: 📊 Tiptoe Sensor
+            icon: mdi:thermometer
+            show_header_toggle: false
+            entities:
+              - entity: sensor.tiptoe_s_ht_sensor_temperature
+                name: Temperature
+              - entity: sensor.tiptoe_s_ht_sensor_humidity
+                name: Humidity
+              - entity: sensor.tiptoe_s_ht_sensor_battery
+                name: Battery
+
+      # ============================================
+      # 4. HUMIDIFIER TIMER
+      # ============================================
+      - type: grid
+        square: false
+        columns: 2
+        cards:
+          - type: gauge
+            title: ⏰ Humidifier Timer
+            entity: sensor.humidifier_hours_remaining
+            name: Hours Remaining
+            min: 0
+            max: 12
+            unit: hours
+            severity:
+              green: 6
+              yellow: 2
+              red: 0
+
+          - type: button
+            name: Reset Humidifier Timer
+            icon: mdi:refresh
+            tap_action:
+              action: call-service
+              service: script.humidifier_refill_reset
+
+      # ============================================
+      # 5. SETTINGS
+      # ============================================
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: Settings
+            icon: mdi:cog
+            entities:
+              - entity: input_number.tortoise_temperature_target
+                name: Target Temperature
+              - entity: input_number.temperature_hysteresis_range
+                name: Temperature Hysteresis Range
+              - entity: input_number.tortoise_humidity_target
+                name: Target Humidity
+              - entity: input_number.humidity_hysteresis_range
+                name: Humidity Hysteresis Range
+              - entity: input_number.outdoor_minimum_temperature
+                name: Outdoor Minimum Temperature
+              - entity: input_number.device_min_cycle_time
+                name: Minimum Cycle Time
+              - entity: input_number.sensor_disagreement_threshold
+                name: Sensor Disagreement Threshold
+              - entity: input_number.temperature_change_rate_threshold
+                name: Temperature Change Rate Threshold
+
+          - type: entities
+            title: Lights Schedule
+            icon: mdi:lightbulb-clock
+            entities:
+              - entity: input_datetime.lights_on_time
+                name: Lights On Time
+              - entity: input_datetime.lights_off_time
+                name: Lights Off Time
+
+          - type: entities
+            title: Fan Temperature Control
+            icon: mdi:fan
+            entities:
+              - entity: input_number.fan_temperature_min
+                name: Fan Temperature Min
+              - entity: input_number.fan_temperature_max
+                name: Fan Temperature Max
+
+      # ============================================
+      # 7. SYSTEM STATUS
+      # ============================================
+      - type: entities
+        title: System Status
+        icon: mdi:check-circle-outline
+        entities:
+          - entity: sensor.tortoise_system_health
+            name: System Health
+          - entity: input_boolean.tortoise_automation_enabled
+            name: Automation Enabled
+          - entity: input_boolean.lights_schedule_enabled
+            name: Lights Schedule Enabled
+            icon: mdi:lightbulb-on-outline
+          - entity: input_boolean.fan_temperature_control_enabled
+            name: Fan Temperature Control Enabled
+            icon: mdi:fan
+          - entity: binary_sensor.outdoor_safe_for_tortoises
+            name: Outdoor Safe
+
+      # ============================================
+      # 8. HISTORICAL CHARTS
+      # ============================================
+      - type: history-graph
+        title: Temperature (24 Hours)
+        hours_to_show: 24
+        refresh_interval: 60
+        entities:
+          - entity: sensor.tortoise_average_temperature
+            name: Average
+          - entity: sensor.tortoise_ht_sensor_temperature
+            name: Matcha
+          - entity: sensor.tiptoe_s_ht_sensor_temperature
+            name: Tiptoe
+          - entity: input_number.tortoise_temperature_target
+            name: Target
+
+      - type: history-graph
+        title: Humidity (24 Hours)
+        hours_to_show: 24
+        refresh_interval: 60
+        entities:
+          - entity: sensor.tortoise_average_humidity
+            name: Average
+          - entity: sensor.tortoise_ht_sensor_humidity
+            name: Matcha
+          - entity: sensor.tiptoe_s_ht_sensor_humidity
+            name: Tiptoe
+          - entity: input_number.tortoise_humidity_target
+            name: Target
+
+      - type: history-graph
+        title: Devices (24 Hours)
+        hours_to_show: 24
+        refresh_interval: 60
+        entities:
+          - entity: switch.heater
+            name: Heater
+          - entity: switch.humidifier
+            name: Humidifier
+          - entity: switch.fans
+            name: Fans
+          - entity: switch.lights
+            name: Lights
+
+

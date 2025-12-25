@@ -1,0 +1,24 @@
+# ============================================
+# SCRIPTS
+# ============================================
+
+humidifier_refill_reset:
+  alias: "Reset Humidifier Timer"
+  description: "Resets the humidifier timer to 12 hours"
+  icon: mdi:water-plus
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.humidifier_timer_hours_remaining
+      data:
+        value: 12.0
+    - service: notify.notify
+      data:
+        title: "✅ Humidifier Timer Reset"
+        message: "Humidifier timer has been reset to 12 hours."
+    - service: system_log.write
+      data:
+        message: "Humidifier timer reset to 12 hours by user"
+        level: info
+        logger: tortoise_environment_control
+
