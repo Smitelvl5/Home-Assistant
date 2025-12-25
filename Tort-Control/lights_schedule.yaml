@@ -1,0 +1,150 @@
+# ============================================
+# LIGHTS SCHEDULE AUTOMATION - TORTOISE HABITAT
+# ============================================
+# Automatically controls lights for proper day/night cycle
+
+id: 'lights_schedule_control'
+alias: "Lights Schedule Control"
+description: "Automatically turns lights on and off based on scheduled times for tortoise habitat"
+
+trigger:
+  # Check every minute to see if it's time to turn lights on/off
+  - platform: time_pattern
+    minutes: '/1'
+    id: time_check
+  # Trigger when schedule is enabled to sync current state
+  - platform: state
+    entity_id: input_boolean.lights_schedule_enabled
+    to: 'on'
+    id: schedule_enabled
+  # Trigger when schedule times change to sync state
+  - platform: state
+    entity_id: input_datetime.lights_on_time
+    id: on_time_changed
+  - platform: state
+    entity_id: input_datetime.lights_off_time
+    id: off_time_changed
+
+condition:
+  - condition: state
+    entity_id: input_boolean.lights_schedule_enabled
+    state: 'on'
+  - condition: template
+    value_template: >
+      {% set on_time = states('input_datetime.lights_on_time') %}
+      {% set off_time = states('input_datetime.lights_off_time') %}
+      {{ on_time not in ['unavailable', 'unknown', 'none', ''] and 
+         off_time not in ['unavailable', 'unknown', 'none', ''] }}
+
+action:
+  - variables:
+      on_time_str: '{{ states("input_datetime.lights_on_time") }}'
+      off_time_str: '{{ states("input_datetime.lights_off_time") }}'
+      current_time: '{{ now().strftime("%H:%M") }}'
+      should_be_on: >
+        {% set on_time = on_time_str %}
+        {% set off_time = off_time_str %}
+        {% set current = current_time %}
+        {% if on_time in ['unavailable', 'unknown', 'none', ''] or off_time in ['unavailable', 'unknown', 'none', ''] %}
+          false
+        {% else %}
+          {# input_datetime returns "HH:MM:SS", so take only first 2 parts #}
+          {% set on_parts = on_time.split(':') %}
+          {% set off_parts = off_time.split(':') %}
+          {% set on_hour = on_parts[0] | int %}
+          {% set on_min = on_parts[1] | int %}
+          {% set off_hour = off_parts[0] | int %}
+          {% set off_min = off_parts[1] | int %}
+          {% set current_hour, current_min = current.split(':') | map('int') %}
+          {% set current_minutes = current_hour * 60 + current_min %}
+          {% set on_minutes = on_hour * 60 + on_min %}
+          {% set off_minutes = off_hour * 60 + off_min %}
+          {# Handle overnight schedule (off time is next day, e.g., 22:00 to 06:00) #}
+          {% if off_minutes < on_minutes %}
+            {# Lights should be on if current time is after on_time OR before off_time #}
+            {{ current_minutes >= on_minutes or current_minutes < off_minutes }}
+          {% else %}
+            {# Normal schedule: lights on between on_time and off_time #}
+            {{ current_minutes >= on_minutes and current_minutes < off_minutes }}
+          {% endif %}
+        {% endif %}
+      is_on_time: >-
+        {% set on_formatted = on_time_str.split(':')[:2] | join(':') %}
+        {{ current_time == on_formatted }}
+      is_off_time: >-
+        {% set off_formatted = off_time_str.split(':')[:2] | join(':') %}
+        {{ current_time == off_formatted }}
+
+  - choose:
+      # Turn lights ON at scheduled time
+      - conditions:
+          - condition: template
+            value_template: '{{ is_on_time }}'
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: switch.lights
+          - service: system_log.write
+            data:
+              message: 'Lights turned ON by schedule at {{ current_time }} (Schedule: {{ on_time_str }} - {{ off_time_str }})'
+              level: info
+              logger: tortoise_lights_control
+
+      # Turn lights OFF at scheduled time
+      - conditions:
+          - condition: template
+            value_template: '{{ is_off_time }}'
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: switch.lights
+          - service: system_log.write
+            data:
+              message: 'Lights turned OFF by schedule at {{ current_time }} (Schedule: {{ on_time_str }} - {{ off_time_str }})'
+              level: info
+              logger: tortoise_lights_control
+
+      # Continuously check and sync lights state (runs every minute)
+      - conditions:
+          - condition: trigger
+            id:
+              - time_check
+              - schedule_enabled
+              - on_time_changed
+              - off_time_changed
+        sequence:
+          - if:
+              - condition: template
+                value_template: '{{ should_be_on }}'
+            then:
+              - if:
+                  - condition: state
+                    entity_id: switch.lights
+                    state: 'off'
+                then:
+                  - service: switch.turn_on
+                    target:
+                      entity_id: switch.lights
+                  - service: system_log.write
+                    data:
+                      message: 'Lights corrected to ON (current time {{ current_time }} is within schedule {{ on_time_str }} - {{ off_time_str }})'
+                      level: info
+                      logger: tortoise_lights_control
+            else:
+              - if:
+                  - condition: state
+                    entity_id: switch.lights
+                    state: 'on'
+                then:
+                  - service: switch.turn_off
+                    target:
+                      entity_id: switch.lights
+                  - service: system_log.write
+                    data:
+                      message: 'Lights corrected to OFF (current time {{ current_time }} is outside schedule {{ on_time_str }} - {{ off_time_str }})'
+                      level: info
+                      logger: tortoise_lights_control
+
+mode: restart
+max: 5
+

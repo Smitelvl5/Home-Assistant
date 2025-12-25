@@ -1,0 +1,308 @@
+# ============================================
+# MAIN CONTROL AUTOMATION - OPTIMIZED
+# ============================================
+
+id: '1761645947390'
+alias: Tortoise Environment Control
+description: 'Automatically control heater, humidifier, and fans with safety checks'
+trigger:
+  # Time-based trigger: runs every minute instead of on every sensor update
+  - platform: time_pattern
+    minutes: '/1'
+    id: periodic_check
+  # Immediate trigger when automation is manually enabled
+  - platform: state
+    entity_id: input_boolean.tortoise_automation_enabled
+    to: 'on'
+    id: automation_enabled
+
+condition:
+  - condition: state
+    entity_id: input_boolean.tortoise_automation_enabled
+    state: 'on'
+  - condition: template
+    value_template: >
+      {{ states('sensor.tortoise_ht_sensor_temperature') not in ['unavailable', 'unknown', 'none'] and
+         states('sensor.tiptoe_s_ht_sensor_temperature') not in ['unavailable', 'unknown', 'none'] and
+         states('sensor.tortoise_ht_sensor_humidity') not in ['unavailable', 'unknown', 'none'] and
+         states('sensor.tiptoe_s_ht_sensor_humidity') not in ['unavailable', 'unknown', 'none'] }}
+  # Note: Sensor disagreement check removed - automation continues even with temperature conflicts
+
+action:
+  - service: system_log.write
+    data:
+      message: 'Tortoise Control: Temp={{ avg_temp | round(1) }}°F, Humidity={{ avg_humidity | round(1) }}%, H={{ states("switch.heater") }}, Hu={{ states("switch.humidifier") }}, F={{ states("switch.fans") }}'
+      level: info
+      logger: tortoise_environment_control
+
+  # ===== HUMIDITY CONTROL =====
+  - if:
+      - condition: template
+        value_template: '{{ avg_humidity < humidity_low }}'
+      - condition: state
+        entity_id: switch.humidifier
+        state: 'off'
+        for:
+          minutes: 3
+      # Short cycling protection: must be off for minimum cycle time before turning on
+      - condition: template
+        value_template: '{{ humidifier_off_duration >= min_cycle_time }}'
+    then:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.humidifier
+      - service: system_log.write
+        data:
+          message: 'Humidity {{ avg_humidity | round(1) }}% < {{ humidity_low }}% → Humidifier ON'
+          level: info
+          logger: tortoise_environment_control
+    else:
+      # Log when prevented from turning on
+      - if:
+          - condition: template
+            value_template: '{{ avg_humidity < humidity_low and humidifier_off_duration < min_cycle_time }}'
+        then:
+          - service: system_log.write
+            data:
+              message: 'Humidifier: Short cycling protection - minimum cycle time not met (off for {{ humidifier_off_duration | round(1) }}/{{ min_cycle_time }} min)'
+              level: debug
+              logger: tortoise_environment_control
+
+  - if:
+      - condition: template
+        value_template: '{{ avg_humidity > humidity_high }}'
+      - condition: state
+        entity_id: switch.humidifier
+        state: 'on'
+        for:
+          minutes: 5
+      # Short cycling protection: must be on for minimum cycle time before turning off
+      - condition: template
+        value_template: '{{ humidifier_on_duration >= min_cycle_time }}'
+    then:
+      - service: switch.turn_off
+        target:
+          entity_id: switch.humidifier
+      - service: system_log.write
+        data:
+          message: 'Humidity {{ avg_humidity | round(1) }}% > {{ humidity_high }}% → Humidifier OFF (was on for {{ humidifier_on_duration | round(1) }} min)'
+          level: info
+          logger: tortoise_environment_control
+    else:
+      # Log when short cycling protection prevents action
+      - if:
+          - condition: template
+            value_template: '{{ avg_humidity > humidity_high and humidifier_on_duration < min_cycle_time }}'
+        then:
+          - service: system_log.write
+            data:
+              message: 'Humidifier: Short cycling protection - minimum cycle time not met (on for {{ humidifier_on_duration | round(1) }}/{{ min_cycle_time }} min)'
+              level: debug
+              logger: tortoise_environment_control
+
+  # ===== TEMPERATURE CONTROL =====
+  - if:
+      # Normal trigger: temp below threshold OR early trigger if dropping fast
+      - condition: or
+        conditions:
+          - condition: template
+            value_template: '{{ avg_temp < temp_low }}'
+          - condition: template
+            value_template: '{{ heater_early_trigger }}'
+      - condition: state
+        entity_id: switch.heater
+        state: 'off'
+        for:
+          minutes: 3
+      # Short cycling protection: must be off for minimum cycle time before turning on
+      - condition: template
+        value_template: '{{ heater_off_duration >= min_cycle_time }}'
+    then:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.heater
+      - service: system_log.write
+        data:
+          message: 'Temp {{ avg_temp | round(1) }}°F (rate: {{ temp_change_rate }}°F/min) → Heater ON{% if heater_early_trigger %} [EARLY: Fast drop detected]{% endif %}'
+          level: info
+          logger: tortoise_environment_control
+    else:
+      # Log when short cycling protection prevents action
+      - if:
+          - condition: template
+            value_template: '{{ (avg_temp < temp_low or heater_early_trigger) and heater_off_duration < min_cycle_time }}'
+        then:
+          - service: system_log.write
+            data:
+              message: 'Heater: Short cycling protection - minimum cycle time not met (off for {{ heater_off_duration | round(1) }}/{{ min_cycle_time }} min)'
+              level: debug
+              logger: tortoise_environment_control
+
+  - if:
+      - condition: template
+        value_template: '{{ avg_temp > temp_high }}'
+      - condition: state
+        entity_id: switch.heater
+        state: 'on'
+        for:
+          minutes: 5
+      # Short cycling protection: must be on for minimum cycle time before turning off
+      - condition: template
+        value_template: '{{ heater_on_duration >= min_cycle_time }}'
+    then:
+      - service: switch.turn_off
+        target:
+          entity_id: switch.heater
+      - service: system_log.write
+        data:
+          message: 'Temp {{ avg_temp | round(1) }}°F > {{ temp_high }}°F → Heater OFF (was on for {{ heater_on_duration | round(1) }} min)'
+          level: info
+          logger: tortoise_environment_control
+    else:
+      # Log when short cycling protection prevents action
+      - if:
+          - condition: template
+            value_template: '{{ avg_temp > temp_high and heater_on_duration < min_cycle_time }}'
+        then:
+          - service: system_log.write
+            data:
+              message: 'Heater: Short cycling protection - minimum cycle time not met (on for {{ heater_on_duration | round(1) }}/{{ min_cycle_time }} min)'
+              level: debug
+              logger: tortoise_environment_control
+
+  # ===== LIGHTS SCHEDULE CONTROL =====
+  - if:
+      - condition: state
+        entity_id: input_boolean.lights_schedule_enabled
+        state: 'on'
+      - condition: template
+        value_template: '{{ lights_schedule_valid }}'
+      - condition: template
+        value_template: '{{ not lights_should_be_on }}'
+      - condition: state
+        entity_id: switch.lights
+        state: 'on'
+    then:
+      - service: switch.turn_off
+        target:
+          entity_id: switch.lights
+      - service: system_log.write
+        data:
+          message: 'Lights automatically turned OFF (manually turned on outside schedule at {{ now().strftime("%H:%M") }}, schedule: {{ lights_on_time }} - {{ lights_off_time }})'
+          level: info
+          logger: tortoise_environment_control
+
+mode: restart
+max: 10
+
+variables:
+  matcha_temp: '{{ states("sensor.tortoise_ht_sensor_temperature") | float(0) }}'
+  matcha_humidity: '{{ states("sensor.tortoise_ht_sensor_humidity") | float(0) }}'
+  tiptoe_temp: '{{ states("sensor.tiptoe_s_ht_sensor_temperature") | float(0) }}'
+  tiptoe_humidity: '{{ states("sensor.tiptoe_s_ht_sensor_humidity") | float(0) }}'
+  avg_temp: '{{ (matcha_temp + tiptoe_temp) / 2 }}'
+  avg_humidity: '{{ (matcha_humidity + tiptoe_humidity) / 2 }}'
+  # Get temperature change rate from derivative sensor
+  temp_change_rate: '{{ states("sensor.tortoise_temperature_change_rate") | float(0) }}'
+  temp_target: '{{ states("input_number.tortoise_temperature_target") | float(80) }}'
+  temp_range: '{{ states("input_number.temperature_hysteresis_range") | float(2) }}'
+  humidity_target: '{{ states("input_number.tortoise_humidity_target") | float(50) }}'
+  humidity_range: '{{ states("input_number.humidity_hysteresis_range") | float(10) }}'
+  temp_low: '{{ temp_target - temp_range }}'
+  temp_high: '{{ temp_target + temp_range }}'
+  humidity_low: '{{ humidity_target - humidity_range }}'
+  humidity_high: '{{ humidity_target + humidity_range }}'
+  rate_threshold: '{{ states("input_number.temperature_change_rate_threshold") | float(1.0) }}'
+  # Early trigger thresholds: if temp is changing fast, trigger earlier
+  # For heater: if dropping fast, trigger even if slightly above temp_low
+  heater_early_trigger: '{{ avg_temp < (temp_low + (rate_threshold * 2)) and temp_change_rate < (-rate_threshold) }}'
+  # Short cycling protection: minimum cycle time (applies to both on and off states)
+  min_cycle_time: '{{ states("input_number.device_min_cycle_time") | float(5) }}'
+  # Calculate time since device last changed state
+  heater_on_duration: >-
+    {% if is_state('switch.heater', 'on') %}
+      {{ ((as_timestamp(now()) - as_timestamp(states.switch.heater.last_changed)) / 60) | round(1) }}
+    {% else %}
+      0
+    {% endif %}
+  heater_off_duration: >-
+    {% if is_state('switch.heater', 'off') %}
+      {{ ((as_timestamp(now()) - as_timestamp(states.switch.heater.last_changed)) / 60) | round(1) }}
+    {% else %}
+      0
+    {% endif %}
+  humidifier_on_duration: >-
+    {% if is_state('switch.humidifier', 'on') %}
+      {{ ((as_timestamp(now()) - as_timestamp(states.switch.humidifier.last_changed)) / 60) | round(1) }}
+    {% else %}
+      0
+    {% endif %}
+  humidifier_off_duration: >-
+    {% if is_state('switch.humidifier', 'off') %}
+      {{ ((as_timestamp(now()) - as_timestamp(states.switch.humidifier.last_changed)) / 60) | round(1) }}
+    {% else %}
+      0
+    {% endif %}
+  # Fan control variables - temperature range (like lights schedule)
+  fan_temp_min: '{{ states("input_number.fan_temperature_min") | float(80) }}'
+  fan_temp_max: '{{ states("input_number.fan_temperature_max") | float(88) }}'
+  fans_should_be_on: >-
+    {% set temp_min = fan_temp_min %}
+    {% set temp_max = fan_temp_max %}
+    {% set current_temp = avg_temp %}
+    {{ current_temp >= temp_min and current_temp <= temp_max }}
+  fans_on_duration: >-
+    {% if is_state('switch.fans', 'on') %}
+      {{ ((as_timestamp(now()) - as_timestamp(states.switch.fans.last_changed)) / 60) | round(1) }}
+    {% else %}
+      0
+    {% endif %}
+  fans_off_duration: >-
+    {% if is_state('switch.fans', 'off') %}
+      {{ ((as_timestamp(now()) - as_timestamp(states.switch.fans.last_changed)) / 60) | round(1) }}
+    {% else %}
+      0
+    {% endif %}
+  # Lights schedule variables - format to HH:MM (input_datetime returns HH:MM:SS)
+  lights_on_time: >-
+    {% set time_str = states("input_datetime.lights_on_time") %}
+    {% if ':' in time_str %}
+      {{ time_str.split(':')[:2] | join(':') }}
+    {% else %}
+      {{ time_str }}
+    {% endif %}
+  lights_off_time: >-
+    {% set time_str = states("input_datetime.lights_off_time") %}
+    {% if ':' in time_str %}
+      {{ time_str.split(':')[:2] | join(':') }}
+    {% else %}
+      {{ time_str }}
+    {% endif %}
+  lights_schedule_valid: >-
+    {% set on_time = states('input_datetime.lights_on_time') %}
+    {% set off_time = states('input_datetime.lights_off_time') %}
+    {{ on_time not in ['unavailable', 'unknown', 'none', ''] and 
+       off_time not in ['unavailable', 'unknown', 'none', ''] }}
+  lights_should_be_on: >-
+    {% set on_time = lights_on_time %}
+    {% set off_time = lights_off_time %}
+    {% if on_time in ['unavailable', 'unknown', 'none', ''] or off_time in ['unavailable', 'unknown', 'none', ''] %}
+      false
+    {% else %}
+      {% set current = now().strftime("%H:%M") %}
+      {# Times are already formatted as HH:MM #}
+      {% set on_hour, on_min = on_time.split(':') | map('int') %}
+      {% set off_hour, off_min = off_time.split(':') | map('int') %}
+      {% set current_hour, current_min = current.split(':') | map('int') %}
+      {% set current_minutes = current_hour * 60 + current_min %}
+      {% set on_minutes = on_hour * 60 + on_min %}
+      {% set off_minutes = off_hour * 60 + off_min %}
+      {# Handle overnight schedule (off time is next day, e.g., 22:00 to 06:00) #}
+      {% if off_minutes < on_minutes %}
+        {# Lights should be on if current time is after on_time OR before off_time #}
+        {{ current_minutes >= on_minutes or current_minutes < off_minutes }}
+      {% else %}
+        {# Normal schedule: lights on between on_time and off_time #}
+        {{ current_minutes >= on_minutes and current_minutes < off_minutes }}
+      {% endif %}
+    {% endif %}

@@ -1,0 +1,33 @@
+
+# ============================================
+# SAFETY: Sensor Temperature Disagreement
+# ============================================
+
+id: 'tortoise_sensor_disagreement'
+alias: "SAFETY: Sensor Temperature Disagreement"
+description: "Alert when temperature sensors disagree - possible sensor failure"
+trigger:
+  - platform: template
+    value_template: >
+      {{ (states('sensor.tortoise_ht_sensor_temperature') | float(0) - 
+          states('sensor.tiptoe_s_ht_sensor_temperature') | float(0)) | abs > 
+         (states('input_number.sensor_disagreement_threshold') | float(5)) }}
+    for:
+      minutes: 5
+
+condition:
+  - condition: state
+    entity_id: input_boolean.tortoise_automation_enabled
+    state: 'on'
+
+action:
+  # Only alert - do NOT disable automation
+  - service: notify.notify
+    data:
+      title: "⚠️ WARNING: Temperature Sensor Disagreement"
+      message: "Matcha: {{ states('sensor.tortoise_ht_sensor_temperature') }}°F | Tiptoe: {{ states('sensor.tiptoe_s_ht_sensor_temperature') }}°F | Difference: {{ (states('sensor.tortoise_ht_sensor_temperature') | float(0) - states('sensor.tiptoe_s_ht_sensor_temperature') | float(0)) | abs | round(1) }}°F\n\nAutomation continues running. Check sensor batteries and connections."
+  - service: system_log.write
+    data:
+      message: "WARNING: Sensor disagreement detected - alert sent, automation continues"
+      level: warning
+      logger: tortoise_environment_control

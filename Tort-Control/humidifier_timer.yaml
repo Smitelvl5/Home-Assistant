@@ -1,0 +1,36 @@
+# ============================================
+# HUMIDIFIER TIMER COUNTDOWN
+# ============================================
+# Simple countdown timer that decreases when humidifier is on
+# Pauses when humidifier is off
+# Resets to 12 hours when reset button is pressed
+
+id: 'humidifier_timer_countdown'
+alias: "Humidifier Timer Countdown"
+description: "Counts down from 12 hours when humidifier is on, pauses when off"
+trigger:
+  - platform: time_pattern
+    minutes: '/1'
+  # Also trigger when humidifier state changes
+  - platform: state
+    entity_id: switch.humidifier
+
+condition:
+  - condition: state
+    entity_id: switch.humidifier
+    state: 'on'
+
+action:
+  - service: input_number.set_value
+    target:
+      entity_id: input_number.humidifier_timer_hours_remaining
+    data:
+      value: >
+        {% set current = states('input_number.humidifier_timer_hours_remaining') | float(12.0) %}
+        {% set decrement = 1.0 / 60.0 %}  {# 1 minute = 1/60 hour #}
+        {% set new_value = current - decrement %}
+        {{ [new_value, 0.0] | max | round(2) }}
+
+mode: restart
+max: 5
+
