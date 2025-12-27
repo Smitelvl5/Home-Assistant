@@ -167,6 +167,8 @@ views:
             title: Fan Temperature Control
             icon: mdi:fan
             entities:
+              - entity: sensor.fan_control_outdoor_temperature
+                name: Outdoor Temp (Fan Decision)
               - entity: input_number.fan_temperature_min
                 name: Fan Temperature Min
               - entity: input_number.fan_temperature_max

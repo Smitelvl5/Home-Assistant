@@ -346,6 +346,32 @@ template:
             mdi:water-check
           {% endif %}
 
+      # Fan Control Outdoor Temperature (temperature used for fan decision)
+      - name: "Fan Control Outdoor Temperature"
+        unique_id: fan_control_outdoor_temperature
+        state_class: measurement
+        device_class: temperature
+        unit_of_measurement: "°F"
+        state: >-
+          {% set temp = state_attr('weather.forecast_home', 'temperature') | float(0) %}
+          {% if temp == 0 %}
+            {% set temp = state_attr('weather.forecast_home', 'current_temperature') | float(0) %}
+          {% endif %}
+          {% if temp == 0 %}
+            {% set temp = states('weather.forecast_home') | float(0) %}
+          {% endif %}
+          {{ temp if temp != 0 and temp is not none else 'unavailable' }}
+        availability: >-
+          {% set temp = state_attr('weather.forecast_home', 'temperature') | float(0) %}
+          {% if temp == 0 %}
+            {% set temp = state_attr('weather.forecast_home', 'current_temperature') | float(0) %}
+          {% endif %}
+          {% if temp == 0 %}
+            {% set temp = states('weather.forecast_home') | float(0) %}
+          {% endif %}
+          {{ temp != 0 and temp is not none }}
+        icon: mdi:thermometer-outline
+
   - binary_sensor:
       # Outdoor Safe for Tortoises
       - name: "Outdoor Safe for Tortoises"
