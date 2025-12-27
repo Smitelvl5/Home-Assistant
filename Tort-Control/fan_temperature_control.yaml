@@ -34,16 +34,7 @@ condition:
       {% set min_temp = states('input_number.fan_temperature_min') | float(0) %}
       {% set max_temp = states('input_number.fan_temperature_max') | float(0) %}
       {{ min_temp > 0 and max_temp > 0 and max_temp > min_temp }}
-  - condition: template
-    value_template: >
-      {% set temp = state_attr('weather.forecast_home', 'temperature') | float(0) %}
-      {% if temp == 0 %}
-        {% set temp = state_attr('weather.forecast_home', 'current_temperature') | float(0) %}
-      {% endif %}
-      {% if temp == 0 %}
-        {% set temp = states('weather.forecast_home') | float(0) %}
-      {% endif %}
-      {{ temp != 0 and temp is not none }}
+  # Note: Removed temperature availability check from condition - we handle it gracefully in action
 
 action:
   - variables:
@@ -51,27 +42,49 @@ action:
       max_temp: '{{ states("input_number.fan_temperature_max") | float(80) }}'
       outdoor_temp: >-
         {% set temp = state_attr('weather.forecast_home', 'temperature') | float(0) %}
-        {% if temp == 0 %}
+        {% if temp == 0 or temp is none %}
           {% set temp = state_attr('weather.forecast_home', 'current_temperature') | float(0) %}
         {% endif %}
-        {% if temp == 0 %}
+        {% if temp == 0 or temp is none %}
           {% set temp = states('weather.forecast_home') | float(0) %}
+        {% endif %}
+        {% if temp == 0 or temp is none %}
+          {% set temp = state_attr('weather.forecast_home', 'forecast')[0].temperature | float(0) if state_attr('weather.forecast_home', 'forecast') is defined and state_attr('weather.forecast_home', 'forecast') | length > 0 else 0 %}
         {% endif %}
         {{ temp }}
       outdoor_temp_available: >-
         {% set temp = state_attr('weather.forecast_home', 'temperature') | float(0) %}
-        {% if temp == 0 %}
+        {% if temp == 0 or temp is none %}
           {% set temp = state_attr('weather.forecast_home', 'current_temperature') | float(0) %}
         {% endif %}
-        {% if temp == 0 %}
+        {% if temp == 0 or temp is none %}
           {% set temp = states('weather.forecast_home') | float(0) %}
         {% endif %}
-        {{ temp != 0 and temp is not none }}
+        {% if temp == 0 or temp is none %}
+          {% set temp = state_attr('weather.forecast_home', 'forecast')[0].temperature | float(0) if state_attr('weather.forecast_home', 'forecast') is defined and state_attr('weather.forecast_home', 'forecast') | length > 0 else 0 %}
+        {% endif %}
+        {{ temp != 0 and temp is not none and temp > -50 and temp < 150 }}
       fans_should_be_on: >-
         {% if outdoor_temp_available %}
           {{ outdoor_temp >= min_temp and outdoor_temp <= max_temp }}
         {% else %}
-          false
+          {# If temp unavailable, maintain current state (don't change fans) #}
+          {{ is_state('switch.fans', 'on') }}
+        {% endif %}
+      # Short cycling protection: minimum cycle time (applies to both on and off states)
+      min_cycle_time: '{{ states("input_number.device_min_cycle_time") | float(5) }}'
+      # Calculate time since fans last changed state
+      fans_on_duration: >-
+        {% if is_state('switch.fans', 'on') %}
+          {{ ((as_timestamp(now()) - as_timestamp(states.switch.fans.last_changed)) / 60) | round(1) }}
+        {% else %}
+          0
+        {% endif %}
+      fans_off_duration: >-
+        {% if is_state('switch.fans', 'off') %}
+          {{ ((as_timestamp(now()) - as_timestamp(states.switch.fans.last_changed)) / 60) | round(1) }}
+        {% else %}
+          0
         {% endif %}
 
   - choose:
@@ -84,36 +97,98 @@ action:
               - min_temp_changed
               - max_temp_changed
         sequence:
+          # Diagnostic logging to help troubleshoot
+          - service: system_log.write
+            data:
+              message: 'Fan Control Check: temp={{ outdoor_temp | round(1) }}°F, available={{ outdoor_temp_available }}, range={{ min_temp }}-{{ max_temp }}°F, in_range={{ (outdoor_temp >= min_temp and outdoor_temp <= max_temp) if outdoor_temp_available else "N/A" }}, should_be_on={{ fans_should_be_on }}, current_state={{ states("switch.fans") }}, on_duration={{ fans_on_duration | round(1) }}min, off_duration={{ fans_off_duration | round(1) }}min'
+              level: debug
+              logger: tortoise_fan_control
           - if:
               - condition: template
                 value_template: '{{ fans_should_be_on }}'
+              # Only turn on if temperature is actually available and within range
+              - condition: template
+                value_template: '{{ outdoor_temp_available }}'
+              - condition: state
+                entity_id: switch.fans
+                state: 'off'
+                for:
+                  minutes: 3
+              # Short cycling protection: must be off for minimum cycle time before turning on
+              - condition: template
+                value_template: '{{ fans_off_duration >= min_cycle_time }}'
             then:
-              - if:
-                  - condition: state
-                    entity_id: switch.fans
-                    state: 'off'
-                then:
-                  - service: switch.turn_on
-                    target:
-                      entity_id: switch.fans
-                  - service: system_log.write
-                    data:
-                      message: 'Fans turned ON (outdoor temp {{ outdoor_temp | round(1) }}°F is within range {{ min_temp }}°F - {{ max_temp }}°F)'
-                      level: info
-                      logger: tortoise_fan_control
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.fans
+              - service: system_log.write
+                data:
+                  message: 'Fans turned ON (outdoor temp {{ outdoor_temp | round(1) }}°F is within range {{ min_temp }}°F - {{ max_temp }}°F)'
+                  level: info
+                  logger: tortoise_fan_control
             else:
+              # Log when prevented from turning on
               - if:
-                  - condition: state
-                    entity_id: switch.fans
-                    state: 'on'
+                  - condition: template
+                    value_template: '{{ not outdoor_temp_available }}'
                 then:
-                  - service: switch.turn_off
-                    target:
-                      entity_id: switch.fans
                   - service: system_log.write
                     data:
-                      message: 'Fans turned OFF (outdoor temp {{ outdoor_temp | round(1) }}°F is outside range {{ min_temp }}°F - {{ max_temp }}°F)'
-                      level: info
+                      message: 'Fans: Temperature unavailable - maintaining current state (fans {{ "ON" if is_state("switch.fans", "on") else "OFF" }})'
+                      level: debug
+                      logger: tortoise_fan_control
+              - if:
+                  - condition: template
+                    value_template: '{{ fans_should_be_on and fans_off_duration < min_cycle_time and outdoor_temp_available }}'
+                then:
+                  - service: system_log.write
+                    data:
+                      message: 'Fans: Short cycling protection - minimum cycle time not met (off for {{ fans_off_duration | round(1) }}/{{ min_cycle_time }} min)'
+                      level: debug
+                      logger: tortoise_fan_control
+
+          - if:
+              - condition: template
+                value_template: '{{ not fans_should_be_on }}'
+              # Only turn off if temperature is actually available and outside range
+              - condition: template
+                value_template: '{{ outdoor_temp_available }}'
+              - condition: state
+                entity_id: switch.fans
+                state: 'on'
+                for:
+                  minutes: 5
+              # Short cycling protection: must be on for minimum cycle time before turning off
+              - condition: template
+                value_template: '{{ fans_on_duration >= min_cycle_time }}'
+            then:
+              - service: switch.turn_off
+                target:
+                  entity_id: switch.fans
+              - service: system_log.write
+                data:
+                  message: 'Fans turned OFF (outdoor temp {{ outdoor_temp | round(1) }}°F is outside range {{ min_temp }}°F - {{ max_temp }}°F, was on for {{ fans_on_duration | round(1) }} min)'
+                  level: info
+                  logger: tortoise_fan_control
+            else:
+              # Log when short cycling protection prevents action
+              - if:
+                  - condition: template
+                    value_template: '{{ not outdoor_temp_available }}'
+                then:
+                  - service: system_log.write
+                    data:
+                      message: 'Fans: Temperature unavailable - maintaining current state (fans {{ "ON" if is_state("switch.fans", "on") else "OFF" }})'
+                      level: debug
+                      logger: tortoise_fan_control
+              - if:
+                  - condition: template
+                    value_template: '{{ not fans_should_be_on and fans_on_duration < min_cycle_time and outdoor_temp_available }}'
+                then:
+                  - service: system_log.write
+                    data:
+                      message: 'Fans: Short cycling protection - minimum cycle time not met (on for {{ fans_on_duration | round(1) }}/{{ min_cycle_time }} min)'
+                      level: debug
                       logger: tortoise_fan_control
 
 mode: restart
